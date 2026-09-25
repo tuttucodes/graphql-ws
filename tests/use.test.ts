@@ -188,7 +188,7 @@ for (const { tServer, skipUWS, startTServer, skipCrossws } of tServers) {
         expect,
       }) => {
         let remoteAddress: string | undefined;
-        const server = await startUWSTServer(
+        const server = await startUWSTServer<{ remoteAddress: string }>(
           {
             onConnect: (ctx) => {
               remoteAddress = ctx.extra.remoteAddress;

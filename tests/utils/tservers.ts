@@ -356,29 +356,16 @@ export async function startWSTServer(
   };
 }
 
-type UWSUpgradeBehavior = Omit<uWS.WebSocketBehavior<unknown>, 'upgrade'> & {
-  upgrade?: (
-    ...args: Parameters<NonNullable<uWS.WebSocketBehavior<unknown>['upgrade']>>
-  ) => Record<PropertyKey, unknown> | void;
-};
-
-type UWSUpgradeExtra<B> = B extends {
-  upgrade: (
-    ...args: Parameters<NonNullable<uWS.WebSocketBehavior<unknown>['upgrade']>>
-  ) => infer U;
-}
-  ? Extract<Exclude<U, void>, Record<PropertyKey, unknown>>
-  : Record<PropertyKey, never>;
-
-export async function startUWSTServer<B extends UWSUpgradeBehavior = {}>(
+export async function startUWSTServer<
+  E extends Record<PropertyKey, unknown> = Record<PropertyKey, never>,
+>(
   options: Partial<
-    ServerOptions<
-      ConnectionInitMessage['payload'],
-      UWSExtra & UWSUpgradeExtra<B>
-    >
+    ServerOptions<ConnectionInitMessage['payload'], UWSExtra & Partial<E>>
   > = {},
   keepAlive?: number, // for ws tests sake
-  behavior: B & UWSUpgradeBehavior = {} as B,
+  behavior: Parameters<
+    typeof makeUWSBehavior<ConnectionInitMessage['payload'], E>
+  >[1] = {},
 ): Promise<TServer> {
   const path = '/simple';
   const emitter = new EventEmitter();
@@ -396,7 +383,7 @@ export async function startUWSTServer<B extends UWSUpgradeBehavior = {}>(
         .App()
         .ws(
           path,
-          makeUWSBehavior(
+          makeUWSBehavior<ConnectionInitMessage['payload'], E>(
             {
               schema,
               ...options,
