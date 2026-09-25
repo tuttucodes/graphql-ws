@@ -13,6 +13,7 @@ import {
 import type { Extra as CrossWsExtra } from '../src/use/crossws';
 import {
   createTClient,
+  startUWSTServer,
   tServers,
   type FastifyExtra,
   type TClient,
@@ -181,6 +182,39 @@ for (const { tServer, skipUWS, startTServer, skipCrossws } of tServers) {
 
       await waitForConnect;
     });
+
+    if (tServer === 'uWebSockets.js')
+      it('should add data returned from the upgrade hook to the context extra', async ({
+        expect,
+      }) => {
+        let remoteAddress: string | undefined;
+        const server = await startUWSTServer(
+          {
+            onConnect: (ctx) => {
+              remoteAddress = ctx.extra.remoteAddress;
+              return false;
+            },
+          },
+          undefined,
+          {
+            upgrade: (res) => ({
+              remoteAddress: Buffer.from(
+                res.getRemoteAddressAsText(),
+              ).toString(),
+            }),
+          },
+        );
+
+        const client = await createTClient(server.url);
+        client.ws.send(
+          stringifyMessage<MessageType.ConnectionInit>({
+            type: MessageType.ConnectionInit,
+          }),
+        );
+
+        await server.waitForConnect();
+        expect(remoteAddress).toBeTruthy();
+      });
 
     it('should close the socket with errors thrown from any callback', async ({
       expect,

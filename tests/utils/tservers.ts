@@ -7,6 +7,7 @@ import uWS from 'uWebSockets.js';
 import { afterAll, it } from 'vitest';
 import type ws from 'ws';
 import { WebSocketServer } from 'ws';
+import type { ConnectionInitMessage } from '../../src/common';
 import type { Context, ServerOptions } from '../../src/server';
 import {
   makeHandler as makeFastifyHandler,
@@ -355,9 +356,29 @@ export async function startWSTServer(
   };
 }
 
-export async function startUWSTServer(
-  options: Partial<ServerOptions> = {},
+type UWSUpgradeBehavior = Omit<uWS.WebSocketBehavior<unknown>, 'upgrade'> & {
+  upgrade?: (
+    ...args: Parameters<NonNullable<uWS.WebSocketBehavior<unknown>['upgrade']>>
+  ) => Record<PropertyKey, unknown> | void;
+};
+
+type UWSUpgradeExtra<B> = B extends {
+  upgrade: (
+    ...args: Parameters<NonNullable<uWS.WebSocketBehavior<unknown>['upgrade']>>
+  ) => infer U;
+}
+  ? Extract<Exclude<U, void>, Record<PropertyKey, unknown>>
+  : Record<PropertyKey, never>;
+
+export async function startUWSTServer<B extends UWSUpgradeBehavior = {}>(
+  options: Partial<
+    ServerOptions<
+      ConnectionInitMessage['payload'],
+      UWSExtra & UWSUpgradeExtra<B>
+    >
+  > = {},
   keepAlive?: number, // for ws tests sake
+  behavior: B & UWSUpgradeBehavior = {} as B,
 ): Promise<TServer> {
   const path = '/simple';
   const emitter = new EventEmitter();
@@ -404,11 +425,15 @@ export async function startUWSTServer(
               },
             },
             {
+              ...behavior,
               open: (socket) => {
                 sockets.add(socket);
+                behavior.open?.(socket);
               },
-              close: (socket) => {
+              close: (...args) => {
+                const [socket] = args;
                 sockets.delete(socket);
+                behavior.close?.(...args);
               },
             },
             keepAlive,

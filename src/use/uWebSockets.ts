@@ -65,14 +65,32 @@ interface Client {
  * Make the behaviour for using a [uWebSockets.js](https://github.com/uNetworking/uWebSockets.js) WebSocket server.
  * This is a basic starter, feel free to copy the code over and adjust it to your needs
  *
+ * Any object returned from `behavior.upgrade` is added to `Context.extra` along
+ * with the persisted request.
+ *
  * @category Server/uWebSockets
  */
+type UpgradeBehavior = Omit<uWS.WebSocketBehavior<unknown>, 'upgrade'> & {
+  upgrade?: (
+    ...args: Parameters<NonNullable<uWS.WebSocketBehavior<unknown>['upgrade']>>
+  ) => Record<PropertyKey, unknown> | void;
+};
+
+type UpgradeExtra<B> = B extends {
+  upgrade: (
+    ...args: Parameters<NonNullable<uWS.WebSocketBehavior<unknown>['upgrade']>>
+  ) => infer U;
+}
+  ? Extract<Exclude<U, void>, Record<PropertyKey, unknown>>
+  : Record<PropertyKey, never>;
+
 export function makeBehavior<
   P extends ConnectionInitMessage['payload'] = ConnectionInitMessage['payload'],
   E extends Record<PropertyKey, unknown> = Record<PropertyKey, never>,
+  B extends UpgradeBehavior = {},
 >(
-  options: ServerOptions<P, Extra & Partial<E>>,
-  behavior: uWS.WebSocketBehavior<unknown> = {},
+  options: ServerOptions<P, Extra & Partial<E> & UpgradeExtra<B>>,
+  behavior: B & UpgradeBehavior = {} as B,
   /**
    * The timout between dispatched keep-alive messages. Internally uses the [ws Ping and Pongs](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets)
    * to check that the link between the clients and the server is operating and to prevent the link
@@ -106,7 +124,7 @@ export function makeBehavior<
       }
     },
     upgrade(...args) {
-      behavior.upgrade?.(...args);
+      const extra = behavior.upgrade?.(...args) ?? {};
       const [res, req, context] = args;
 
       const headers: http.IncomingHttpHeaders = {};
@@ -114,15 +132,16 @@ export function makeBehavior<
         headers[key] = value;
       });
 
-      res.upgrade<UpgradeData>(
+      res.upgrade<UpgradeData & UpgradeExtra<B>>(
         {
+          ...extra,
           persistedRequest: {
             method: req.getMethod(),
             url: req.getUrl(),
             query: req.getQuery(),
             headers,
           },
-        },
+        } as UpgradeData & UpgradeExtra<B>,
         req.getHeader('sec-websocket-key'),
         handleProtocols(req.getHeader('sec-websocket-protocol')) ||
           new Uint8Array(),
@@ -132,8 +151,9 @@ export function makeBehavior<
     },
     open(...args) {
       behavior.open?.(...args);
-      const socket = args[0] as uWS.WebSocket<unknown> & UpgradeData;
-      const persistedRequest = socket.persistedRequest;
+      const socket = args[0] as uWS.WebSocket<UpgradeData & UpgradeExtra<B>>;
+      const upgradeData = socket.getUserData();
+      const persistedRequest = upgradeData.persistedRequest;
 
       // prepare client object
       const client: Client = {
@@ -169,7 +189,7 @@ export function makeBehavior<
           },
           onMessage: (cb) => (client.handleMessage = cb),
         },
-        { socket, persistedRequest } as Extra & Partial<E>,
+        { ...upgradeData, socket } as Extra & Partial<E> & UpgradeExtra<B>,
       );
 
       if (keepAlive > 0 && isFinite(keepAlive)) {
